@@ -13,6 +13,7 @@ const (
 	envICEKeepAliveIntervalSec   = "NB_ICE_KEEP_ALIVE_INTERVAL_SEC"
 	envICEDisconnectedTimeoutSec = "NB_ICE_DISCONNECTED_TIMEOUT_SEC"
 	envICEForceRelayConn         = "NB_ICE_FORCE_RELAY_CONN"
+	envForceRelay                = "NB_FORCE_RELAY"
 )
 
 func iceKeepAlive() time.Duration {
@@ -50,4 +51,11 @@ func iceDisconnectedTimeout() time.Duration {
 func hasICEForceRelayConn() bool {
 	disconnectedTimeoutEnv := os.Getenv(envICEForceRelayConn)
 	return strings.ToLower(disconnectedTimeoutEnv) == "true"
+}
+
+// hasForceRelay reports whether the new Relay transport must be used instead
+// of ICE. Unlike NB_ICE_FORCE_RELAY_CONN this does not require a TURN server.
+func hasForceRelay() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(envForceRelay)))
+	return value == "1" || value == "true" || value == "yes"
 }

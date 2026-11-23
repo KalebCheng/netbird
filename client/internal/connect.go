@@ -15,6 +15,7 @@ import (
 	"github.com/netbirdio/netbird/client/internal/dns"
 	"github.com/netbirdio/netbird/client/internal/listener"
 	"github.com/netbirdio/netbird/client/internal/peer"
+	"github.com/netbirdio/netbird/client/internal/relayclient"
 	"github.com/netbirdio/netbird/client/internal/stdnet"
 	"github.com/netbirdio/netbird/client/ssh"
 	"github.com/netbirdio/netbird/client/system"
@@ -175,7 +176,7 @@ func runClient(ctx context.Context, config *Config, statusRecorder *peer.Status,
 
 		peerConfig := loginResp.GetPeerConfig()
 
-		engineConfig, err := createEngineConfig(myPrivateKey, config, peerConfig)
+		engineConfig, err := createEngineConfig(myPrivateKey, config, peerConfig, loginResp.GetWiretrusteeConfig())
 		if err != nil {
 			log.Error(err)
 			return wrapErr(err)
@@ -224,7 +225,7 @@ func runClient(ctx context.Context, config *Config, statusRecorder *peer.Status,
 }
 
 // createEngineConfig converts configuration received from Management Service to EngineConfig
-func createEngineConfig(key wgtypes.Key, config *Config, peerConfig *mgmProto.PeerConfig) (*EngineConfig, error) {
+func createEngineConfig(key wgtypes.Key, config *Config, peerConfig *mgmProto.PeerConfig, wtConfig *mgmProto.WiretrusteeConfig) (*EngineConfig, error) {
 	engineConf := &EngineConfig{
 		WgIfaceName:          config.WgIface,
 		WgAddr:               peerConfig.Address,
@@ -243,6 +244,14 @@ func createEngineConfig(key wgtypes.Key, config *Config, peerConfig *mgmProto.Pe
 			return nil, err
 		}
 		engineConf.PreSharedKey = &preSharedKey
+	}
+
+	if relayCfg := wtConfig.GetRelay(); relayCfg != nil && len(relayCfg.GetUrls()) > 0 {
+		engineConf.Relay = &relayclient.Config{
+			URLs:           relayCfg.GetUrls(),
+			TokenPayload:   relayCfg.GetTokenPayload(),
+			TokenSignature: relayCfg.GetTokenSignature(),
+		}
 	}
 
 	return engineConf, nil

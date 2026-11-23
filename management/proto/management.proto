@@ -131,6 +131,16 @@ message WiretrusteeConfig {
 
   // a Signal server config
   HostConfig signal = 3;
+
+  // Relay server configuration. Field number matches NetBird 0.81 NetbirdConfig.relay.
+  RelayConfig relay = 4;
+}
+
+// RelayConfig describes the Relay servers and the authentication token issued by Management.
+message RelayConfig {
+  repeated string urls = 1;
+  string tokenPayload = 2;
+  string tokenSignature = 3;
 }
 
 // HostConfig describes connection properties of some server (e.g. STUN, Signal, Management)
@@ -288,6 +298,9 @@ message Route {
   int64  Metric = 5;
   bool   Masquerade = 6;
   string NetID = 7;
+  repeated string Domains = 8;
+  bool   keepRoute = 9;
+  bool   skipAutoApply = 10;
 }
 
 // DNSConfig represents a dns.Update

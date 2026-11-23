@@ -78,6 +78,9 @@ type Route struct {
 	Metric      int
 	Enabled     bool
 	Groups      []string `gorm:"serializer:json"`
+	// Domains is populated for DNS routes. The client resolves these domains
+	// to host prefixes because the 0.25 route manager only understands CIDRs.
+	Domains []string `gorm:"-"`
 }
 
 // EventMeta returns activity event meta related to the route
@@ -99,9 +102,11 @@ func (r *Route) Copy() *Route {
 		Masquerade:  r.Masquerade,
 		Enabled:     r.Enabled,
 		Groups:      make([]string, len(r.Groups)),
+		Domains:     make([]string, len(r.Domains)),
 	}
 	copy(route.Groups, r.Groups)
 	copy(route.PeerGroups, r.PeerGroups)
+	copy(route.Domains, r.Domains)
 	return route
 }
 
@@ -117,7 +122,8 @@ func (r *Route) IsEqual(other *Route) bool {
 		other.Masquerade == r.Masquerade &&
 		other.Enabled == r.Enabled &&
 		compareList(r.Groups, other.Groups) &&
-		compareList(r.PeerGroups, other.PeerGroups)
+		compareList(r.PeerGroups, other.PeerGroups) &&
+		compareList(r.Domains, other.Domains)
 }
 
 // ParseNetwork Parses a network prefix string and returns a netip.Prefix object and if is invalid, IPv4 or IPv6

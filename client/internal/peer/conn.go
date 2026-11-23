@@ -38,6 +38,12 @@ type WgConfig struct {
 	PreSharedKey *wgtypes.Key
 }
 
+// RelayDialer opens a Relay transport stream to a remote peer identified by
+// its WireGuard public key.
+type RelayDialer interface {
+	OpenConn(ctx context.Context, dstPeerID string) (net.Conn, error)
+}
+
 // ConnConfig is a peer Connection configuration
 type ConnConfig struct {
 
@@ -67,6 +73,10 @@ type ConnConfig struct {
 
 	// UsesBind indicates whether the WireGuard interface is userspace and uses bind.ICEBind
 	UserspaceBind bool
+
+	// RelayDialer is optional. When set, a Relay connection is attempted in
+	// parallel with ICE and used as a fallback.
+	RelayDialer RelayDialer
 }
 
 // OfferAnswer represents a session establishment offer or answer
@@ -315,16 +325,7 @@ func (conn *Conn) Open() error {
 		return err
 	}
 
-	// will block until connection succeeded
-	// but it won't release if ICE Agent went into Disconnected or Failed state,
-	// so we have to cancel it with the provided context once agent detected a broken connection
-	isControlling := conn.config.LocalKey > conn.config.Key
-	var remoteConn *ice.Conn
-	if isControlling {
-		remoteConn, err = conn.agent.Dial(conn.ctx, remoteOfferAnswer.IceCredentials.UFrag, remoteOfferAnswer.IceCredentials.Pwd)
-	} else {
-		remoteConn, err = conn.agent.Accept(conn.ctx, remoteOfferAnswer.IceCredentials.UFrag, remoteOfferAnswer.IceCredentials.Pwd)
-	}
+	attempt, err := conn.openRemoteConnection(remoteOfferAnswer)
 	if err != nil {
 		return err
 	}
@@ -334,9 +335,18 @@ func (conn *Conn) Open() error {
 	if remoteOfferAnswer.WgListenPort != 0 {
 		remoteWgPort = remoteOfferAnswer.WgListenPort
 	}
-	// the ice connection has been established successfully so we are ready to start the proxy
-	remoteAddr, err := conn.configureConnection(remoteConn, remoteWgPort)
+
+	var remoteAddr net.Addr
+	if attempt.relay {
+		remoteAddr, err = conn.configureRelayConnection(attempt.conn)
+		if err == nil {
+			conn.watchRelayConn(attempt.conn)
+		}
+	} else {
+		remoteAddr, err = conn.configureConnection(attempt.conn, attempt.pair, remoteWgPort)
+	}
 	if err != nil {
+		_ = attempt.conn.Close()
 		return err
 	}
 
@@ -358,16 +368,12 @@ func isRelayCandidate(candidate ice.Candidate) bool {
 }
 
 // configureConnection starts proxying traffic from/to local Wireguard and sets connection status to StatusConnected
-func (conn *Conn) configureConnection(remoteConn net.Conn, remoteWgPort int) (net.Addr, error) {
+func (conn *Conn) configureConnection(remoteConn net.Conn, pair *ice.CandidatePair, remoteWgPort int) (net.Addr, error) {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 
-	pair, err := conn.agent.GetSelectedCandidatePair()
-	if err != nil {
-		return nil, err
-	}
-
 	var endpoint net.Addr
+	var err error
 	if isRelayCandidate(pair.Local) {
 		log.Debugf("setup relay connection")
 		conn.wgProxy = conn.wgProxyFactory.GetProxy()

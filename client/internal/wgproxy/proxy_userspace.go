@@ -48,6 +48,9 @@ func (p *WGUserSpaceProxy) AddTurnConn(remoteConn net.Conn) (net.Addr, error) {
 // CloseConn close the localConn
 func (p *WGUserSpaceProxy) CloseConn() error {
 	p.cancel()
+	if p.remoteConn != nil {
+		_ = p.remoteConn.Close()
+	}
 	if p.localConn == nil {
 		return nil
 	}
@@ -71,12 +74,13 @@ func (p *WGUserSpaceProxy) proxyToRemote() {
 		default:
 			n, err := p.localConn.Read(buf)
 			if err != nil {
-				continue
+				return
 			}
 
 			_, err = p.remoteConn.Write(buf[:n])
 			if err != nil {
-				continue
+				p.cancel()
+				return
 			}
 		}
 	}
@@ -94,12 +98,14 @@ func (p *WGUserSpaceProxy) proxyToLocal() {
 		default:
 			n, err := p.remoteConn.Read(buf)
 			if err != nil {
-				continue
+				p.cancel()
+				return
 			}
 
 			_, err = p.localConn.Write(buf[:n])
 			if err != nil {
-				continue
+				p.cancel()
+				return
 			}
 		}
 	}

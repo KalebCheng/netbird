@@ -4,9 +4,12 @@
 package routemanager
 
 import (
+	"fmt"
 	"net"
 	"net/netip"
+	"os/exec"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/yusufpapurcu/wmi"
 )
 
@@ -43,4 +46,41 @@ func getRoutesFromTable() ([]netip.Prefix, error) {
 		}
 	}
 	return prefixList, nil
+}
+
+// addToRouteTable uses the Windows route.exe syntax. The generic non-Linux
+// implementation passes a CIDR to "route add", which Windows rejects.
+func addToRouteTable(prefix netip.Prefix, addr string) error {
+	if !prefix.Addr().Is4() {
+		return fmt.Errorf("IPv6 route management is not implemented on Windows: %s", prefix)
+	}
+
+	mask := net.IP(net.CIDRMask(prefix.Bits(), 32)).String()
+	cmd := exec.Command("route", "add", prefix.Addr().String(), "mask", mask, addr)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("route add %s mask %s %s: %w: %s", prefix.Addr(), mask, addr, err, string(out))
+	}
+	log.Debugf("%s", out)
+	return nil
+}
+
+func removeFromRouteTable(prefix netip.Prefix, _ string) error {
+	if !prefix.Addr().Is4() {
+		return fmt.Errorf("IPv6 route management is not implemented on Windows: %s", prefix)
+	}
+
+	mask := net.IP(net.CIDRMask(prefix.Bits(), 32)).String()
+	cmd := exec.Command("route", "delete", prefix.Addr().String(), "mask", mask)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("route delete %s mask %s: %w: %s", prefix.Addr(), mask, err, string(out))
+	}
+	log.Debugf("%s", out)
+	return nil
+}
+
+func enableIPForwarding() error {
+	log.Infof("enable IP forwarding is not implemented on Windows")
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime"
 	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
@@ -35,6 +36,9 @@ type DefaultManager struct {
 	wgInterface    *iface.WGIface
 	pubKey         string
 	notifier       *notifier
+	domainResolver *domainRouteResolver
+	domainCancel   context.CancelFunc
+	lastUpdateSeq  uint64
 }
 
 func NewManager(ctx context.Context, pubKey string, wgInterface *iface.WGIface, statusRecorder *peer.Status, initialRoutes []*route.Route) *DefaultManager {
@@ -47,6 +51,7 @@ func NewManager(ctx context.Context, pubKey string, wgInterface *iface.WGIface, 
 		wgInterface:    wgInterface,
 		pubKey:         pubKey,
 		notifier:       newNotifier(),
+		domainResolver: newDomainRouteResolver(),
 	}
 
 	if runtime.GOOS == "android" {
@@ -68,6 +73,10 @@ func (m *DefaultManager) EnableServerRouter(firewall firewall.Manager) error {
 // Stop stops the manager watchers and clean firewall rules
 func (m *DefaultManager) Stop() {
 	m.stop()
+	if m.domainCancel != nil {
+		m.domainCancel()
+		m.domainCancel = nil
+	}
 	if m.serverRouter != nil {
 		m.serverRouter.cleanUp()
 	}
@@ -84,19 +93,75 @@ func (m *DefaultManager) UpdateRoutes(updateSerial uint64, newRoutes []*route.Ro
 		m.mux.Lock()
 		defer m.mux.Unlock()
 
-		newServerRoutesMap, newClientRoutesIDMap := m.classifiesRoutes(newRoutes)
+		m.lastUpdateSeq = updateSerial
+		m.domainResolver.setBaseRoutes(newRoutes)
+		m.startOrStopDomainWatcherLocked()
 
-		m.updateClientNetworks(updateSerial, newClientRoutesIDMap)
-		m.notifier.onNewRoutes(newClientRoutesIDMap)
+		expanded, _ := m.domainResolver.resolve(m.ctx)
+		return m.applyRoutesLocked(updateSerial, expanded)
+	}
+}
 
-		if m.serverRouter != nil {
-			err := m.serverRouter.updateRoutes(newServerRoutesMap)
-			if err != nil {
-				return err
-			}
+func (m *DefaultManager) applyRoutesLocked(updateSerial uint64, newRoutes []*route.Route) error {
+	newServerRoutesMap, newClientRoutesIDMap := m.classifiesRoutes(newRoutes)
+
+	m.updateClientNetworks(updateSerial, newClientRoutesIDMap)
+	m.notifier.onNewRoutes(newClientRoutesIDMap)
+
+	if m.serverRouter != nil {
+		err := m.serverRouter.updateRoutes(newServerRoutesMap)
+		if err != nil {
+			return err
 		}
+	}
 
-		return nil
+	return nil
+}
+
+func (m *DefaultManager) startOrStopDomainWatcherLocked() {
+	if !m.domainResolver.hasRoutes() {
+		if m.domainCancel != nil {
+			m.domainCancel()
+			m.domainCancel = nil
+		}
+		return
+	}
+	if m.domainCancel != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.domainCancel = cancel
+	go m.domainRefreshLoop(ctx)
+}
+
+func (m *DefaultManager) domainRefreshLoop(ctx context.Context) {
+	ticker := time.NewTicker(domainRouteInterval())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.refreshDomainRoutes()
+		}
+	}
+}
+
+func (m *DefaultManager) refreshDomainRoutes() {
+	m.mux.Lock()
+	defer m.mux.Unlock()
+	if m.ctx == nil || m.ctx.Err() != nil {
+		return
+	}
+
+	expanded, changed := m.domainResolver.resolve(m.ctx)
+	if !changed {
+		return
+	}
+	if err := m.applyRoutesLocked(m.lastUpdateSeq, expanded); err != nil {
+		log.Errorf("failed to apply refreshed DNS routes: %v", err)
 	}
 }
 

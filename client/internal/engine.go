@@ -22,6 +22,7 @@ import (
 	"github.com/netbirdio/netbird/client/internal/acl"
 	"github.com/netbirdio/netbird/client/internal/dns"
 	"github.com/netbirdio/netbird/client/internal/peer"
+	"github.com/netbirdio/netbird/client/internal/relayclient"
 	"github.com/netbirdio/netbird/client/internal/routemanager"
 	"github.com/netbirdio/netbird/client/internal/wgproxy"
 	nbssh "github.com/netbirdio/netbird/client/ssh"
@@ -76,6 +77,9 @@ type EngineConfig struct {
 	NATExternalIPs []string
 
 	CustomDNSAddress string
+
+	// Relay is the initial Relay configuration received during login.
+	Relay *relayclient.Config
 }
 
 // Engine is a mechanism responsible for reacting on Signal and Management stream events and managing connections to the remote peers.
@@ -104,6 +108,7 @@ type Engine struct {
 
 	wgInterface    *iface.WGIface
 	wgProxyFactory *wgproxy.Factory
+	relayClient    *relayclient.Client
 
 	udpMux *bind.UniversalUDPMuxDefault
 
@@ -135,7 +140,7 @@ func NewEngine(
 	config *EngineConfig, mobileDep MobileDependency, statusRecorder *peer.Status,
 ) *Engine {
 
-	return &Engine{
+	engine := &Engine{
 		ctx:            ctx,
 		cancel:         cancel,
 		signal:         signalClient,
@@ -151,6 +156,16 @@ func NewEngine(
 		statusRecorder: statusRecorder,
 		wgProxyFactory: wgproxy.NewFactory(config.WgPort),
 	}
+
+	if config.Relay != nil {
+		engine.relayClient = relayclient.New(config.WgPrivateKey.PublicKey().String())
+		if err := engine.relayClient.UpdateConfig(config.Relay); err != nil {
+			log.Warnf("failed to apply initial relay config: %v", err)
+			engine.relayClient = nil
+		}
+	}
+
+	return engine
 }
 
 func (e *Engine) Stop() error {
@@ -160,6 +175,10 @@ func (e *Engine) Stop() error {
 	err := e.removeAllPeers()
 	if err != nil {
 		return err
+	}
+
+	if e.relayClient != nil {
+		_ = e.relayClient.Close()
 	}
 
 	// very ugly but we want to remove peers from the WireGuard interface first before removing interface.
@@ -234,6 +253,10 @@ func (e *Engine) Start() error {
 
 	e.receiveSignalEvents()
 	e.receiveManagementEvents()
+
+	if e.relayClient != nil {
+		e.relayClient.Start(e.ctx)
+	}
 
 	return nil
 }
@@ -392,6 +415,8 @@ func (e *Engine) handleSync(update *mgmProto.SyncResponse) error {
 	defer e.syncMsgMux.Unlock()
 
 	if update.GetWiretrusteeConfig() != nil {
+		e.updateRelayConfig(update.GetWiretrusteeConfig().GetRelay())
+
 		err := e.updateTURNs(update.GetWiretrusteeConfig().GetTurns())
 		if err != nil {
 			return err
@@ -414,6 +439,27 @@ func (e *Engine) handleSync(update *mgmProto.SyncResponse) error {
 	}
 
 	return nil
+}
+
+func (e *Engine) updateRelayConfig(relayCfg *mgmProto.RelayConfig) {
+	if relayCfg == nil || len(relayCfg.GetUrls()) == 0 {
+		return
+	}
+
+	cfg := &relayclient.Config{
+		URLs:           relayCfg.GetUrls(),
+		TokenPayload:   relayCfg.GetTokenPayload(),
+		TokenSignature: relayCfg.GetTokenSignature(),
+	}
+
+	if e.relayClient == nil {
+		e.relayClient = relayclient.New(e.config.WgPrivateKey.PublicKey().String())
+	}
+	if err := e.relayClient.UpdateConfig(cfg); err != nil {
+		log.Warnf("failed to update relay config: %v", err)
+		return
+	}
+	e.relayClient.Start(e.ctx)
 }
 
 func isNil(server nbssh.Server) bool {
@@ -633,7 +679,10 @@ func (e *Engine) updateNetworkMap(networkMap *mgmProto.NetworkMap) error {
 func toRoutes(protoRoutes []*mgmProto.Route) []*route.Route {
 	routes := make([]*route.Route, 0)
 	for _, protoRoute := range protoRoutes {
-		_, prefix, _ := route.ParseNetwork(protoRoute.Network)
+		var prefix netip.Prefix
+		if protoRoute.GetNetwork() != "" {
+			_, prefix, _ = route.ParseNetwork(protoRoute.Network)
+		}
 		convertedRoute := &route.Route{
 			ID:          protoRoute.ID,
 			Network:     prefix,
@@ -642,6 +691,7 @@ func toRoutes(protoRoutes []*mgmProto.Route) []*route.Route {
 			Peer:        protoRoute.Peer,
 			Metric:      int(protoRoute.Metric),
 			Masquerade:  protoRoute.Masquerade,
+			Domains:     append([]string(nil), protoRoute.GetDomains()...),
 		}
 		routes = append(routes, convertedRoute)
 	}
@@ -798,6 +848,10 @@ func (e *Engine) createPeerConn(pubKey string, allowedIPs string) (*peer.Conn, e
 
 	// randomize connection timeout
 	timeout := time.Duration(rand.Intn(PeerConnectionTimeoutMax-PeerConnectionTimeoutMin)+PeerConnectionTimeoutMin) * time.Millisecond
+	var relayDialer peer.RelayDialer
+	if e.relayClient != nil {
+		relayDialer = e.relayClient
+	}
 	config := peer.ConnConfig{
 		Key:                  pubKey,
 		LocalKey:             e.config.WgPrivateKey.PublicKey().String(),
@@ -811,6 +865,7 @@ func (e *Engine) createPeerConn(pubKey string, allowedIPs string) (*peer.Conn, e
 		LocalWgPort:          e.config.WgPort,
 		NATExternalIPs:       e.parseNATExternalIPMappings(),
 		UserspaceBind:        e.wgInterface.IsUserspaceBind(),
+		RelayDialer:          relayDialer,
 	}
 
 	peerConn, err := peer.NewConn(config, e.statusRecorder, e.wgProxyFactory, e.mobileDep.TunAdapter, e.mobileDep.IFaceDiscover)
