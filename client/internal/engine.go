@@ -720,6 +720,7 @@ func toDNSConfig(protoDNSConfig *mgmProto.DNSConfig) nbdns.Config {
 			dnsZone.Records = append(dnsZone.Records, dnsRecord)
 		}
 		dnsUpdate.CustomZones = append(dnsUpdate.CustomZones, dnsZone)
+		log.Debugf("DNS custom zone: domain=%s records=%d", dnsZone.Domain, len(dnsZone.Records))
 	}
 
 	for _, nsGroup := range protoDNSConfig.GetNameServerGroups() {
@@ -737,6 +738,8 @@ func toDNSConfig(protoDNSConfig *mgmProto.DNSConfig) nbdns.Config {
 			dnsNSGroup.NameServers = append(dnsNSGroup.NameServers, dnsNS)
 		}
 		dnsUpdate.NameServerGroups = append(dnsUpdate.NameServerGroups, dnsNSGroup)
+		log.Debugf("DNS nameserver group: primary=%t domains=%v search=%t servers=%v",
+			dnsNSGroup.Primary, dnsNSGroup.Domains, dnsNSGroup.SearchDomainsEnabled, dnsNSGroup.NameServers)
 	}
 	return dnsUpdate
 }

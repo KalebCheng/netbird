@@ -28,9 +28,9 @@ func (d *localResolver) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	replyMessage.RecursionAvailable = true
 	replyMessage.Rcode = dns.RcodeSuccess
 
-	response := d.lookupRecord(r)
-	if response != nil {
-		replyMessage.Answer = append(replyMessage.Answer, response)
+	responses := d.lookupRecords(r)
+	if len(responses) > 0 {
+		replyMessage.Answer = append(replyMessage.Answer, responses...)
 	}
 
 	err := w.WriteMsg(replyMessage)
@@ -39,14 +39,46 @@ func (d *localResolver) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 }
 
-func (d *localResolver) lookupRecord(r *dns.Msg) dns.RR {
+func (d *localResolver) lookupRecords(r *dns.Msg) []dns.RR {
 	question := r.Question[0]
-	record, found := d.records.Load(buildRecordKey(question.Name, question.Qclass, question.Qtype))
+	if record, found := d.lookupRecord(question.Name, question.Qclass, question.Qtype); found {
+		return []dns.RR{record}
+	}
+
+	// A/AAAA lookups must include the CNAME chain. The NetBird DNS config
+	// can contain only a CNAME for a managed domain; returning NODATA makes
+	// macOS treat the name as nonexistent instead of following the target.
+	if question.Qtype == dns.TypeCNAME {
+		return nil
+	}
+	record, found := d.lookupRecord(question.Name, question.Qclass, dns.TypeCNAME)
 	if !found {
 		return nil
 	}
 
-	return record.(dns.RR)
+	responses := []dns.RR{record}
+	target := record.(*dns.CNAME).Target
+	for i := 0; i < 8; i++ {
+		if answer, found := d.lookupRecord(target, question.Qclass, question.Qtype); found {
+			responses = append(responses, answer)
+			break
+		}
+		next, found := d.lookupRecord(target, question.Qclass, dns.TypeCNAME)
+		if !found {
+			break
+		}
+		responses = append(responses, next)
+		target = next.(*dns.CNAME).Target
+	}
+	return responses
+}
+
+func (d *localResolver) lookupRecord(name string, class, qType uint16) (dns.RR, bool) {
+	record, found := d.records.Load(buildRecordKey(dns.Fqdn(name), class, qType))
+	if !found {
+		return nil, false
+	}
+	return record.(dns.RR), true
 }
 
 func (d *localResolver) registerRecord(record nbdns.SimpleRecord) error {

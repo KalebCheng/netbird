@@ -43,6 +43,11 @@ func TestLocalResolver_ServeDNS(t *testing.T) {
 			inputMSG:    new(dns.Msg).SetQuestion(recordCNAME.Name, dns.TypeCNAME),
 		},
 		{
+			name:        "Should Return CNAME For A Query",
+			inputRecord: recordCNAME,
+			inputMSG:    new(dns.Msg).SetQuestion(recordCNAME.Name, dns.TypeA),
+		},
+		{
 			name:                "Should Not Write When Not Found A Record",
 			inputRecord:         recordA,
 			inputMSG:            new(dns.Msg).SetQuestion("not.found.com", dns.TypeA),
