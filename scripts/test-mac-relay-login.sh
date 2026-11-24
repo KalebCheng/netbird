@@ -75,7 +75,7 @@ if [[ "$MODE" == "login" ]]; then
   exit 0
 fi
 
-if pgrep -f '/netbird( |$)' >/dev/null 2>&1; then
+if pgrep -f 'netbird([-0-9A-Za-z.]*relay)?( |$)' >/dev/null 2>&1; then
   echo "检测到已有 NetBird 进程。请先停止现有客户端，或使用独立测试机。" >&2
   echo "强行运行会抢占 utun100 和路由，因此脚本默认退出。" >&2
   exit 3
