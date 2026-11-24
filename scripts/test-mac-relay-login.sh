@@ -11,12 +11,14 @@ usage() {
   cat <<'EOF'
 用法:
   NB_SETUP_KEY=<测试 setup key> ./scripts/test-mac-relay-login.sh
+  ./scripts/test-mac-relay-login.sh --login-only
   NB_SETUP_KEY=<测试 setup key> ./scripts/test-mac-relay-login.sh --login-only
   ./scripts/test-mac-relay-login.sh --clean
 
 说明:
   默认使用前台模式启动完整客户端，不安装系统服务，配置写入 /tmp/nb-relay-test。
   --login-only  只执行 Management 登录/注册，不需要 sudo，也不建立隧道。
+  不设置 NB_SETUP_KEY 时会打开浏览器走 SSO 登录。
   --clean       删除测试配置和日志。
 
 可选环境变量:
@@ -48,12 +50,6 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
-if [[ -z "${NB_SETUP_KEY:-}" ]]; then
-  echo "缺少 NB_SETUP_KEY。请使用测试用 setup key，不要复用生产现有 peer。" >&2
-  usage
-  exit 2
-fi
-
 mkdir -p "$DIR"
 CONFIG="$DIR/config.json"
 LOG_FILE="$DIR/client.log"
@@ -63,8 +59,14 @@ COMMON_ARGS=(
   --log-file console
   -l "${NB_LOG_LEVEL:-debug}"
   -m "$MGMT"
-  -k "$NB_SETUP_KEY"
 )
+if [[ -n "${NB_SETUP_KEY:-}" ]]; then
+  COMMON_ARGS+=(-k "$NB_SETUP_KEY")
+elif [[ -f "$CONFIG" ]]; then
+  echo "检测到已有登录配置，直接启动（不会重新注册）。"
+else
+  echo "未设置 NB_SETUP_KEY，将使用浏览器 SSO 登录。"
+fi
 
 if [[ "$MODE" == "login" ]]; then
   echo "仅登录模式（不建立隧道，不需要 sudo）"
