@@ -68,6 +68,14 @@ func TestICEFAILUREIgnoredWhenRelayIsActive(t *testing.T) {
 	}
 
 	conn.usingRelay = false
+	conn.relayPending = true
+	conn.onICEConnectionStateChange(ice.ConnectionStateFailed)
+	if notified {
+		t.Fatal("ICE failure must not tear down a connection when Relay is ready and waiting for ICE")
+	}
+
+	conn.relayPending = false
+	conn.usingRelay = false
 	conn.onICEConnectionStateChange(ice.ConnectionStateFailed)
 	if !notified {
 		t.Fatal("ICE failure must still tear down a direct connection")

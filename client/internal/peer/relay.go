@@ -68,6 +68,7 @@ func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAtte
 	finishRelay := func() (*connAttempt, error) {
 		conn.mu.Lock()
 		conn.usingRelay = true
+		conn.relayPending = false
 		conn.mu.Unlock()
 		cancel()
 		go drainAttempts(results, attempts-received)
@@ -82,6 +83,9 @@ func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAtte
 				if result.relay && !forceRelay {
 					held := result
 					relayResult = &held
+					conn.mu.Lock()
+					conn.relayPending = true
+					conn.mu.Unlock()
 					log.Debugf("relay to peer %s is ready, waiting for ICE result", conn.config.Key)
 					continue
 				}
@@ -90,6 +94,10 @@ func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAtte
 				if relayResult != nil && relayResult.conn != nil {
 					_ = relayResult.conn.Close()
 				}
+				conn.mu.Lock()
+				conn.relayPending = false
+				conn.usingRelay = result.relay
+				conn.mu.Unlock()
 				cancel()
 				go drainAttempts(results, attempts-received)
 				return &result, nil
