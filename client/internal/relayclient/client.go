@@ -145,6 +145,11 @@ func (c *Client) Ready() bool {
 	return c.connected
 }
 
+// ServerURL returns the Relay URL advertised in Signal offers.
+func (c *Client) ServerURL() string {
+	return c.firstURL()
+}
+
 func (c *Client) run(ctx context.Context) {
 	delay := minReconnectDelay
 	for {

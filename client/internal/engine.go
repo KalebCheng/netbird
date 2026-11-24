@@ -397,7 +397,7 @@ func SignalOfferAnswer(offerAnswer peer.OfferAnswer, myKey wgtypes.Key, remoteKe
 	msg, err := signal.MarshalCredential(myKey, offerAnswer.WgListenPort, remoteKey, &signal.Credential{
 		UFrag: offerAnswer.IceCredentials.UFrag,
 		Pwd:   offerAnswer.IceCredentials.Pwd,
-	}, t)
+	}, t, offerAnswer.RelaySrvAddress)
 	if err != nil {
 		return err
 	}
@@ -849,8 +849,10 @@ func (e *Engine) createPeerConn(pubKey string, allowedIPs string) (*peer.Conn, e
 	// randomize connection timeout
 	timeout := time.Duration(rand.Intn(PeerConnectionTimeoutMax-PeerConnectionTimeoutMin)+PeerConnectionTimeoutMin) * time.Millisecond
 	var relayDialer peer.RelayDialer
+	var relaySrvAddress string
 	if e.relayClient != nil {
 		relayDialer = e.relayClient
+		relaySrvAddress = e.relayClient.ServerURL()
 	}
 	config := peer.ConnConfig{
 		Key:                  pubKey,
@@ -866,6 +868,7 @@ func (e *Engine) createPeerConn(pubKey string, allowedIPs string) (*peer.Conn, e
 		NATExternalIPs:       e.parseNATExternalIPMappings(),
 		UserspaceBind:        e.wgInterface.IsUserspaceBind(),
 		RelayDialer:          relayDialer,
+		RelaySrvAddress:      relaySrvAddress,
 	}
 
 	peerConn, err := peer.NewConn(config, e.statusRecorder, e.wgProxyFactory, e.mobileDep.TunAdapter, e.mobileDep.IFaceDiscover)
@@ -927,8 +930,9 @@ func (e *Engine) receiveSignalEvents() {
 						UFrag: remoteCred.UFrag,
 						Pwd:   remoteCred.Pwd,
 					},
-					WgListenPort: int(msg.GetBody().GetWgListenPort()),
-					Version:      msg.GetBody().GetNetBirdVersion(),
+					WgListenPort:    int(msg.GetBody().GetWgListenPort()),
+					Version:         msg.GetBody().GetNetBirdVersion(),
+					RelaySrvAddress: msg.GetBody().GetRelayServerAddress(),
 				})
 			case sProto.Body_ANSWER:
 				remoteCred, err := signal.UnMarshalCredential(msg)
@@ -943,8 +947,9 @@ func (e *Engine) receiveSignalEvents() {
 						UFrag: remoteCred.UFrag,
 						Pwd:   remoteCred.Pwd,
 					},
-					WgListenPort: int(msg.GetBody().GetWgListenPort()),
-					Version:      msg.GetBody().GetNetBirdVersion(),
+					WgListenPort:    int(msg.GetBody().GetWgListenPort()),
+					Version:         msg.GetBody().GetNetBirdVersion(),
+					RelaySrvAddress: msg.GetBody().GetRelayServerAddress(),
 				})
 			case sProto.Body_CANDIDATE:
 				candidate, err := ice.UnmarshalCandidate(msg.GetBody().Payload)

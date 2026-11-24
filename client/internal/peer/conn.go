@@ -77,6 +77,10 @@ type ConnConfig struct {
 	// RelayDialer is optional. When set, a Relay connection is attempted in
 	// parallel with ICE and used as a fallback.
 	RelayDialer RelayDialer
+
+	// RelaySrvAddress is advertised in the Signal offer/answer so 0.81 peers
+	// know they can open their Relay transport for this connection.
+	RelaySrvAddress string
 }
 
 // OfferAnswer represents a session establishment offer or answer
@@ -89,6 +93,9 @@ type OfferAnswer struct {
 
 	// Version of NetBird Agent
 	Version string
+
+	// RelaySrvAddress is the Relay server advertised by the remote peer.
+	RelaySrvAddress string
 }
 
 // IceCredentials ICE protocol credentials struct
@@ -562,9 +569,10 @@ func (conn *Conn) sendAnswer() error {
 
 	log.Debugf("sending answer to %s", conn.config.Key)
 	err = conn.signalAnswer(OfferAnswer{
-		IceCredentials: IceCredentials{localUFrag, localPwd},
-		WgListenPort:   conn.config.LocalWgPort,
-		Version:        version.NetbirdVersion(),
+		IceCredentials:  IceCredentials{localUFrag, localPwd},
+		WgListenPort:    conn.config.LocalWgPort,
+		Version:         version.NetbirdVersion(),
+		RelaySrvAddress: conn.config.RelaySrvAddress,
 	})
 	if err != nil {
 		return err
@@ -583,9 +591,10 @@ func (conn *Conn) sendOffer() error {
 		return err
 	}
 	err = conn.signalOffer(OfferAnswer{
-		IceCredentials: IceCredentials{localUFrag, localPwd},
-		WgListenPort:   conn.config.LocalWgPort,
-		Version:        version.NetbirdVersion(),
+		IceCredentials:  IceCredentials{localUFrag, localPwd},
+		WgListenPort:    conn.config.LocalWgPort,
+		Version:         version.NetbirdVersion(),
+		RelaySrvAddress: conn.config.RelaySrvAddress,
 	})
 	if err != nil {
 		return err

@@ -57,6 +57,19 @@ message Body {
 
   // featuresSupported list of supported features by the client of this protocol
   repeated uint32 featuresSupported = 6;
+
+  // RosenpassConfig is a Rosenpass config of the remote peer our peer tries to connect to
+  RosenpassConfig rosenpassConfig = 7;
+  // relayServerAddress is url of the relay server
+  optional string relayServerAddress = 8;
+  optional bytes sessionId = 10;
+  // relayServerIP is the IP the sender is connected to on its relay server.
+  optional bytes relayServerIP = 11;
+}
+
+message RosenpassConfig {
+  bytes rosenpassPubKey = 1;
+  string rosenpassServerAddr = 2;
 }
 
 // Mode indicates a connection mode
