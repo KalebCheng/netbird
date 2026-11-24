@@ -118,6 +118,9 @@ type Conn struct {
 
 	agent  *ice.Agent
 	status ConnStatus
+	// usingRelay suppresses ICE failure notifications after Relay has won the
+	// connection race. The canceled ICE attempt still transitions to Failed.
+	usingRelay bool
 
 	statusRecorder *Status
 
@@ -467,6 +470,7 @@ func (conn *Conn) cleanup() error {
 	}
 
 	conn.status = StatusDisconnected
+	conn.usingRelay = false
 
 	peerState := State{
 		PubKey:           conn.config.Key,
@@ -533,6 +537,13 @@ func (conn *Conn) onICESelectedCandidatePair(c1 ice.Candidate, c2 ice.Candidate)
 // onICEConnectionStateChange registers callback of an ICE Agent to track connection state
 func (conn *Conn) onICEConnectionStateChange(state ice.ConnectionState) {
 	log.Debugf("peer %s ICE ConnectionState has changed to %s", conn.config.Key, state.String())
+	conn.mu.Lock()
+	usingRelay := conn.usingRelay
+	conn.mu.Unlock()
+	if usingRelay {
+		log.Debugf("peer %s is using Relay, ignoring ICE state %s", conn.config.Key, state.String())
+		return
+	}
 	if state == ice.ConnectionStateFailed || state == ice.ConnectionStateDisconnected {
 		conn.notifyDisconnected()
 	}

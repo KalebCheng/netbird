@@ -68,6 +68,11 @@ func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAtte
 			if result.err == nil {
 				// Cancel the losing strategy and close any transport that
 				// arrives after the winner.
+				if result.relay {
+					conn.mu.Lock()
+					conn.usingRelay = true
+					conn.mu.Unlock()
+				}
 				cancel()
 				go drainAttempts(results, attempts-received)
 				return &result, nil
@@ -154,6 +159,7 @@ func (conn *Conn) configureRelayConnection(remoteConn net.Conn) (net.Addr, error
 	}
 
 	conn.status = StatusConnected
+	conn.usingRelay = true
 	err = conn.statusRecorder.UpdatePeerState(State{
 		PubKey:                 conn.config.Key,
 		ConnStatus:             conn.status,
