@@ -211,6 +211,25 @@ dist/nb-relayprobe-darwin-arm64 \
 
 期望输出 `OK relay authenticated: instance=...`。
 
+### 6.3 macOS 完整登录测试
+
+仓库提供隔离测试脚本，不会读写 `/etc/netbird`：
+
+```bash
+# 只验证 Management 登录/注册，不建立隧道，不需要 sudo
+NB_SETUP_KEY='<测试 setup key>' \
+  ./scripts/test-mac-relay-login.sh --login-only
+
+# 完整客户端前台运行，需要 sudo；会占用 utun100
+NB_SETUP_KEY='<测试 setup key>' NB_FORCE_RELAY=1 \
+  ./scripts/test-mac-relay-login.sh
+
+# 清理测试配置
+./scripts/test-mac-relay-login.sh --clean
+```
+
+完整模式要求先停止现有 NetBird 客户端，否则会抢占 `utun100` 和路由。
+
 ## 7. Windows 7 现场测试步骤
 
 1. 使用管理员权限运行。
