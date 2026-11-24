@@ -20,9 +20,11 @@ type connAttempt struct {
 	err   error
 }
 
-// openRemoteConnection races an ICE dial with an optional Relay dial. ICE is
-// not allowed to block the Relay fallback: both strategies run in parallel and
-// the first successful transport wins.
+// openRemoteConnection races an ICE dial with an optional Relay dial. Relay is
+// prepared in parallel so ICE cannot block it forever, but ICE keeps priority:
+// a successful Relay attempt is held until ICE fails or the attempt timeout
+// expires. This matches the 0.81 peers, which only open their Relay transport
+// after their own ICE attempt fails.
 func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAttempt, error) {
 	attemptCtx, cancel := context.WithCancel(conn.ctx)
 	defer cancel()
@@ -60,18 +62,33 @@ func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAtte
 	defer timer.Stop()
 
 	var firstErr error
+	var relayResult *connAttempt
 	received := 0
+
+	finishRelay := func() (*connAttempt, error) {
+		conn.mu.Lock()
+		conn.usingRelay = true
+		conn.mu.Unlock()
+		cancel()
+		go drainAttempts(results, attempts-received)
+		return relayResult, nil
+	}
+
 	for received < attempts {
 		select {
 		case result := <-results:
 			received++
 			if result.err == nil {
-				// Cancel the losing strategy and close any transport that
-				// arrives after the winner.
-				if result.relay {
-					conn.mu.Lock()
-					conn.usingRelay = true
-					conn.mu.Unlock()
+				if result.relay && !forceRelay {
+					held := result
+					relayResult = &held
+					log.Debugf("relay to peer %s is ready, waiting for ICE result", conn.config.Key)
+					continue
+				}
+
+				// Direct ICE won, or Relay was explicitly forced.
+				if relayResult != nil && relayResult.conn != nil {
+					_ = relayResult.conn.Close()
 				}
 				cancel()
 				go drainAttempts(results, attempts-received)
@@ -81,7 +98,15 @@ func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAtte
 				firstErr = result.err
 			}
 			log.Debugf("connection attempt to peer %s failed: %v", conn.config.Key, result.err)
+			if !result.relay && relayResult != nil {
+				log.Infof("ICE to peer %s failed, using Relay", conn.config.Key)
+				return finishRelay()
+			}
 		case <-timer.C:
+			if relayResult != nil {
+				log.Infof("ICE to peer %s did not finish in time, using Relay", conn.config.Key)
+				return finishRelay()
+			}
 			if firstErr != nil {
 				return nil, fmt.Errorf("connection to peer %s timed out: %w", conn.config.Key, firstErr)
 			}
@@ -91,6 +116,9 @@ func (conn *Conn) openRemoteConnection(remoteOfferAnswer OfferAnswer) (*connAtte
 		}
 	}
 
+	if relayResult != nil {
+		return finishRelay()
+	}
 	if firstErr == nil {
 		firstErr = errors.New("all connection attempts failed")
 	}
